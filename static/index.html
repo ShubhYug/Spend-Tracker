@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Spend Tracker</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  section { margin-bottom: 2rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }
+  label { display: block; margin-top: 0.5rem; font-size: 0.85rem; color: #555; }
+  input, select, button { font-size: 1rem; padding: 0.4rem; margin-top: 0.15rem; }
+  input, select { width: 100%; box-sizing: border-box; }
+  button { margin-top: 1rem; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  .error { color: #b00020; margin-top: 0.5rem; }
+  .insight { color: #a15c00; font-size: 0.9rem; }
+  .row { display: flex; gap: 1rem; }
+  .row > div { flex: 1; }
+</style>
+</head>
+<body>
+  <h1>Spend Tracker</h1>
+
+  <section>
+    <label>API Key</label>
+    <input id="apiKey" type="password" placeholder="X-API-Key" value="dev-secret-key" />
+  </section>
+
+  <section>
+    <h2>Add Expense</h2>
+    <div class="row">
+      <div>
+        <label>Amount</label>
+        <input id="amount" type="number" step="0.01" min="0.01" />
+      </div>
+      <div>
+        <label>Category</label>
+        <input id="category" type="text" placeholder="Food" />
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Date</label>
+        <input id="date" type="date" />
+      </div>
+      <div>
+        <label>Note (optional)</label>
+        <input id="note" type="text" />
+      </div>
+    </div>
+    <button id="addBtn">Add Expense</button>
+    <div id="addError" class="error"></div>
+  </section>
+
+  <section>
+    <h2>Expenses</h2>
+    <button id="refreshBtn">Refresh</button>
+    <table id="expensesTable">
+      <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Note</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Summary</h2>
+    <label>Month</label>
+    <input id="summaryMonth" type="month" />
+    <button id="summaryBtn">Get Summary</button>
+    <div id="summaryError" class="error"></div>
+    <div id="summaryResult"></div>
+  </section>
+
+<script>
+  const apiKeyInput = document.getElementById('apiKey');
+
+  function headers() {
+    return { 'Content-Type': 'application/json', 'X-API-Key': apiKeyInput.value };
+  }
+
+  document.getElementById('date').valueAsDate = new Date();
+  const now = new Date();
+  document.getElementById('summaryMonth').value =
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  async function loadExpenses() {
+    const tbody = document.querySelector('#expensesTable tbody');
+    tbody.innerHTML = '';
+    const resp = await fetch('/expenses', { headers: headers() });
+    if (!resp.ok) return;
+    const rows = await resp.json();
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${row.date}</td><td>${row.category}</td><td>${row.amount.toFixed(2)}</td><td>${row.note ?? ''}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  document.getElementById('addBtn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('addError');
+    errorEl.textContent = '';
+    const payload = {
+      amount: parseFloat(document.getElementById('amount').value),
+      category: document.getElementById('category').value,
+      date: document.getElementById('date').value,
+      note: document.getElementById('note').value || null,
+    };
+    const resp = await fetch('/expenses', { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      errorEl.textContent = 'Error: ' + (body.detail ? JSON.stringify(body.detail) : resp.status);
+      return;
+    }
+    document.getElementById('amount').value = '';
+    document.getElementById('category').value = '';
+    document.getElementById('note').value = '';
+    document.getElementById('date').valueAsDate = new Date();
+    await loadExpenses();
+  });
+
+  document.getElementById('refreshBtn').addEventListener('click', loadExpenses);
+
+  document.getElementById('summaryBtn').addEventListener('click', async () => {
+    const errorEl = document.getElementById('summaryError');
+    const resultEl = document.getElementById('summaryResult');
+    errorEl.textContent = '';
+    resultEl.innerHTML = '';
+    const month = document.getElementById('summaryMonth').value;
+    const resp = await fetch(`/summary?month=${encodeURIComponent(month)}`, { headers: headers() });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      errorEl.textContent = 'Error: ' + (body.detail ? JSON.stringify(body.detail) : resp.status);
+      return;
+    }
+    const s = await resp.json();
+    const changeText = s.total_change_pct === null ? 'n/a' : s.total_change_pct.toFixed(1) + '%';
+    let html = `<p><strong>Total:</strong> ${s.total_spend.toFixed(2)} (prev month: ${s.previous_month_total.toFixed(2)}, change: ${changeText})</p>`;
+    html += '<table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>';
+    for (const c of s.by_category) {
+      html += `<tr><td>${c.category}</td><td>${c.total.toFixed(2)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    if (s.insights.length) {
+      html += '<div class="insight"><strong>Insights:</strong><ul>' +
+        s.insights.map(i => `<li>${i}</li>`).join('') + '</ul></div>';
+    }
+    resultEl.innerHTML = html;
+  });
+
+  loadExpenses();
+</script>
+</body>
+</html>
